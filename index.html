@@ -19,9 +19,25 @@
         .pr .build { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.4rem; }
         .pr details { margin-top: 0.4rem; }
         .pr summary { cursor: pointer; font-size: 0.9em; }
-        .commits { list-style: none; padding-left: 0.5rem; margin: 0.4rem 0; font-size: 0.9em; }
-        .commits li { margin: 0.25rem 0; }
-        .commits code { margin-right: 0.4em; }
+        .commits { list-style: none; padding: 0; margin: 0.5rem 0 0.25rem; font-size: 0.9em; border-top: 1px solid #eee; }
+        .commits li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; padding: 0.4rem 0.25rem; border-bottom: 1px solid #eee; }
+        .commits li.status, .commits li.error { display: block; }
+        .commits .sha { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; padding: 0.05em 0.4em; border-radius: 3px; background: #f3f3f3; color: #333; text-decoration: none; }
+        .commits .sha:hover { background: #e6e6e6; }
+        .commits .message { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .commits .meta { color: #888; font-size: 0.85em; }
+        .commits .meta .badge { margin-left: 0.3em; }
+        .commits .action { white-space: nowrap; font-size: 0.9em; text-decoration: none; padding: 0.1em 0.5em; border-radius: 3px; }
+        .commits a.action:hover { text-decoration: underline; }
+        .commits .action.bin { background: #d4edda; color: #155724; font-weight: 600; }
+        .commits .action.success { background: #eef6f0; color: #155724; }
+        .commits .action.failure, .commits .action.cancelled, .commits .action.timed_out { background: #f8d7da; color: #721c24; }
+        .commits .action.running { background: #fff3cd; color: #856404; }
+        .commits .action.none { color: #999; }
+        @media (max-width: 480px) {
+            .commits li { grid-template-columns: auto minmax(0, 1fr); align-items: start; row-gap: 0.3rem; }
+            .commits .action { grid-column: 2; justify-self: start; }
+        }
         .status { color: #666; font-style: italic; }
         .error { color: #b00; }
         #repo-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
@@ -151,6 +167,16 @@
             return a;
         }
 
+        function relativeTime(iso) {
+            const seconds = (new Date(iso) - Date.now()) / 1000;
+            const units = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]];
+            const format = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+            for (const [unit, size] of units) {
+                if (Math.abs(seconds) >= size) return format.format(Math.round(seconds / size), unit);
+            }
+            return 'just now';
+        }
+
         function shortSha(sha) {
             return sha.slice(0, 7);
         }
@@ -235,33 +261,49 @@
             return ciRunsPromise;
         }
 
-        async function renderCommits(repo, pr, prRelease, buildPaths, list) {
+        async function renderCommits(repo, pr, prRelease, buildPaths, list, summary) {
             try {
                 const [commits, runs] = await Promise.all([
                     githubApi(`${repo}/pulls/${pr.number}/commits?per_page=100`),
                     loadCiRuns(repo)
                 ]);
                 list.innerHTML = '';
+                summary.textContent = `Commits (${commits.length})`;
                 for (const commit of commits.reverse()) {
                     const item = el('li');
-                    const sha = el('code');
-                    sha.appendChild(link(`${pr.html_url}/commits/${commit.sha}`, shortSha(commit.sha)));
+                    const sha = link(`${pr.html_url}/commits/${commit.sha}`, shortSha(commit.sha));
+                    sha.className = 'sha';
                     item.appendChild(sha);
-                    item.appendChild(el('span', '', commit.commit.message.split('\n')[0] + ' — '));
+
+                    const text = el('div');
+                    const message = el('div', 'message', commit.commit.message.split('\n')[0]);
+                    message.title = commit.commit.message;
+                    text.appendChild(message);
+                    const author = commit.author ? commit.author.login : commit.commit.author.name;
+                    const meta = el('div', 'meta', `${author} · ${relativeTime(commit.commit.author.date)}`);
+                    if (commit.sha === pr.head.sha) meta.appendChild(el('span', 'badge', 'latest'));
+                    text.appendChild(meta);
+                    item.appendChild(text);
 
                     const path = `pr-${pr.number}/${commit.sha}/firmware.bin`;
+                    let action;
                     if (buildPaths.has(path)) {
-                        item.appendChild(link(rawUrl(repo, path), 'download .bin'));
+                        action = link(rawUrl(repo, path), '⬇ .bin');
+                        action.classList.add('bin');
                     } else if (prRelease && prRelease.target_commitish === commit.sha) {
-                        item.appendChild(link(prRelease.asset.browser_download_url, 'download .bin'));
+                        action = link(prRelease.asset.browser_download_url, '⬇ .bin');
+                        action.classList.add('bin');
                     } else if (runs.has(commit.sha)) {
                         const run = runs.get(commit.sha);
-                        const state = run.status === 'completed' ? run.conclusion : run.status.replace('_', ' ');
-                        item.appendChild(el('span', 'note', 'no .bin kept; '));
-                        item.appendChild(link(run.html_url, `CI run (${state}, zip artifact needs GitHub login)`));
+                        const state = run.status === 'completed' ? run.conclusion : 'running';
+                        action = link(run.html_url, `CI ${state === 'running' ? run.status.replace('_', ' ') : state}`);
+                        action.classList.add(state);
+                        action.title = 'No .bin kept for this commit; the CI run has a zip artifact (needs a GitHub login)';
                     } else {
-                        item.appendChild(el('span', 'note', 'no build'));
+                        action = el('span', 'none', 'no build');
                     }
+                    action.classList.add('action');
+                    item.appendChild(action);
                     list.appendChild(item);
                 }
             } catch (err) {
@@ -313,14 +355,15 @@
                 box.appendChild(build);
 
                 const details = el('details');
-                details.appendChild(el('summary', '', 'Commits'));
+                const summary = el('summary', '', 'Commits');
+                details.appendChild(summary);
                 const list = el('ul', 'commits');
                 list.innerHTML = '<li class="status">Loading commits…</li>';
                 details.appendChild(list);
                 details.addEventListener('toggle', () => {
                     if (details.open && !details.dataset.loaded) {
                         details.dataset.loaded = '1';
-                        renderCommits(repo, pr, prRelease, buildPaths, list);
+                        renderCommits(repo, pr, prRelease, buildPaths, list, summary);
                     }
                 });
                 box.appendChild(details);
