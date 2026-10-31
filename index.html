@@ -14,6 +14,8 @@
         .badge.prerelease { background: #fff3cd; color: #856404; }
         .badge.latest { background: #d4edda; color: #155724; }
         .note { color: #666; font-size: 0.9em; }
+        .download { display: inline-block; padding: 0.2em 0.65em; border: 1px solid #b7dcc0; border-radius: 4px; background: #d4edda; color: #155724; font-size: 0.9em; font-weight: 600; text-decoration: none; white-space: nowrap; }
+        .download:hover { background: #c3e6cb; border-color: #9fd0ab; }
         .pr { margin: 0.75rem 0; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 4px; }
         .pr .title { font-weight: 600; }
         .pr .build { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.4rem; }
@@ -29,7 +31,6 @@
         .commits .meta .badge { margin-left: 0.3em; }
         .commits .action { white-space: nowrap; font-size: 0.9em; text-decoration: none; padding: 0.1em 0.5em; border-radius: 3px; }
         .commits a.action:hover { text-decoration: underline; }
-        .commits .action.bin { background: #d4edda; color: #155724; font-weight: 600; }
         .commits .action.success { background: #eef6f0; color: #155724; }
         .commits .action.failure, .commits .action.cancelled, .commits .action.timed_out { background: #f8d7da; color: #721c24; }
         .commits .action.running { background: #fff3cd; color: #856404; }
@@ -83,7 +84,7 @@
         Browsers can't fetch firmware straight from GitHub release downloads (no CORS headers), so a build
         without a connect button has to be downloaded first and then picked here.
     </p>
-    <div id="local-file">
+    <div id="local-file" tabindex="-1">
         <input id="local-file-input" type="file" accept=".bin,application/octet-stream" />
     </div>
 
@@ -205,10 +206,24 @@
             return `https://raw.githubusercontent.com/${repo}/${BUILDS_BRANCH}/${path}`;
         }
 
-        // Install button when a CORS-safe copy exists, otherwise a hint to use the file picker.
-        function flashControl(repo, buildPaths, path, name, version) {
-            if (buildPaths.has(path)) return installButton(name, version, rawUrl(repo, path));
-            return el('span', 'note', 'download, then flash it below');
+        function downloadLink(href, text = '⬇ Download .bin') {
+            const a = link(href, text);
+            a.className = 'download';
+            return a;
+        }
+
+        // Install button plus download when a CORS-safe copy exists, otherwise download plus a
+        // pointer to the file picker.
+        function appendBuildControls(container, repo, buildPaths, path, name, version, downloadUrl) {
+            if (buildPaths.has(path)) {
+                container.appendChild(installButton(name, version, rawUrl(repo, path)));
+                container.appendChild(downloadLink(rawUrl(repo, path)));
+                return;
+            }
+            container.appendChild(downloadLink(downloadUrl));
+            const hint = el('span', 'note', 'then flash it under ');
+            hint.appendChild(link('#local-file', 'Flash a downloaded file'));
+            container.appendChild(hint);
         }
 
         function renderReleases(repo, releases, buildPaths) {
@@ -233,9 +248,8 @@
                     row.appendChild(el('span', 'badge prerelease', 'pre-release'));
                 }
 
-                row.appendChild(flashControl(repo, buildPaths, `releases/${release.tag_name}/firmware.bin`,
-                    `Owie ${release.tag_name}`, release.tag_name));
-                row.appendChild(link(asset.browser_download_url, 'download .bin'));
+                appendBuildControls(row, repo, buildPaths, `releases/${release.tag_name}/firmware.bin`,
+                    `Owie ${release.tag_name}`, release.tag_name, asset.browser_download_url);
                 releasesContainer.appendChild(row);
             }
         }
@@ -288,11 +302,9 @@
                     const path = `pr-${pr.number}/${commit.sha}/firmware.bin`;
                     let action;
                     if (buildPaths.has(path)) {
-                        action = link(rawUrl(repo, path), '⬇ .bin');
-                        action.classList.add('bin');
+                        action = downloadLink(rawUrl(repo, path), '⬇ .bin');
                     } else if (prRelease && prRelease.target_commitish === commit.sha) {
-                        action = link(prRelease.asset.browser_download_url, '⬇ .bin');
-                        action.classList.add('bin');
+                        action = downloadLink(prRelease.asset.browser_download_url, '⬇ .bin');
                     } else if (runs.has(commit.sha)) {
                         const run = runs.get(commit.sha);
                         const state = run.status === 'completed' ? run.conclusion : 'running';
@@ -338,17 +350,15 @@
                 const build = el('div', 'build');
                 if (buildPaths.has(headPath)) {
                     build.appendChild(el('span', 'note', `build of ${shortSha(headSha)} (latest commit)`));
-                    build.appendChild(installButton(`Owie PR #${pr.number}`, shortSha(headSha), rawUrl(repo, headPath)));
-                    build.appendChild(link(rawUrl(repo, headPath), 'download .bin'));
+                    appendBuildControls(build, repo, buildPaths, headPath, `Owie PR #${pr.number}`, shortSha(headSha));
                 } else if (prRelease) {
                     const builtSha = prRelease.target_commitish;
                     const label = builtSha === headSha
                         ? `build of ${shortSha(builtSha)} (latest commit)`
                         : `build of ${shortSha(builtSha)}, not of the latest commit ${shortSha(headSha)} — a new build may still be running`;
                     build.appendChild(el('span', 'note', label));
-                    build.appendChild(flashControl(repo, buildPaths, `pr-${pr.number}/${builtSha}/firmware.bin`,
-                        `Owie PR #${pr.number}`, shortSha(builtSha)));
-                    build.appendChild(link(asset.browser_download_url, 'download .bin'));
+                    appendBuildControls(build, repo, buildPaths, `pr-${pr.number}/${builtSha}/firmware.bin`,
+                        `Owie PR #${pr.number}`, shortSha(builtSha), asset.browser_download_url);
                 } else {
                     build.appendChild(el('span', 'note', 'This pull request has no build yet.'));
                 }
