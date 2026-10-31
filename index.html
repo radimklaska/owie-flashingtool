@@ -197,9 +197,10 @@
             return btn;
         }
 
-        // firmware.bin, or firmware_<short sha>.bin as published by the per-PR CI pre-releases.
+        // firmware.bin, or a suffixed name such as firmware_v1.5.1.bin (releases) or
+        // firmware_<short sha>.bin (per-PR CI pre-releases).
         function firmwareAsset(release) {
-            return release.assets.find(a => /^firmware(_[0-9a-f]+)?\.bin$/.test(a.name));
+            return release.assets.find(a => /^firmware(_[\w.-]+)?\.bin$/.test(a.name));
         }
 
         function rawUrl(repo, path) {

@@ -8,7 +8,7 @@ Live page: <https://radimklaska.github.io/owie-flashingtool/>
 
 `index.html` reads the selected repo through the GitHub API at load time and shows:
 
-- **Releases** — every release that ships a `firmware.bin` asset, with GitHub's `latest` and `pre-release` badges. CI pre-releases tagged `ci-pr-<number>` are left out here.
+- **Releases** — every release that ships a firmware asset (`firmware.bin` or `firmware_<suffix>.bin`), with GitHub's `latest` and `pre-release` badges. CI pre-releases tagged `ci-pr-<number>` are left out here.
 - **Open pull requests** — number and title, linked to the PR. If the PR has a build (the `ci-pr-<number>` pre-release, asset `firmware.bin` or `firmware_<short sha>.bin`), the row says which commit it was built from and links the `.bin`; otherwise it says the PR has no build yet. Expanding **Commits** lists every commit of the PR with its `.bin` when one is kept, or a link to its CI run (zip artifact, needs a GitHub login).
 - **Flash a downloaded file** — pick a `.bin` from disk and flash it.
 
@@ -31,7 +31,7 @@ The page defaults to [`radimklaska/owie`](https://github.com/radimklaska/owie). 
 - **Dropdown** — pick `lolwheel/Owie`, `ow-breaker/Owie`, or `Other…` to type any `owner/Repo`.
 - **URL parameter** — append `?repo=owner/Repo`, e.g. `?repo=lolwheel/Owie`. The dropdown and URL stay in sync.
 
-The target repo must publish releases whose assets include a file named `firmware.bin`.
+The target repo must publish releases whose assets include a file named `firmware.bin` or `firmware_<suffix>.bin` (e.g. `firmware_v1.5.1.bin`).
 
 ## Requirements
 
