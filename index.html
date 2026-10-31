@@ -7,17 +7,28 @@
     <script type="module" src="https://unpkg.com/esp-web-tools@10.2.1/dist/web/install-button.js?module"></script>
     <style>
         body { font-family: sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
-        .release { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0; }
+        h2 { font-size: 1.15em; margin-top: 2rem; }
+        .release { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin: 0.5rem 0; }
         .release .tag { font-weight: 600; min-width: 6rem; }
-        .release .badge { font-size: 0.8em; padding: 0 0.4em; border-radius: 3px; background: #eee; color: #555; }
-        .release .badge.prerelease { background: #fff3cd; color: #856404; }
-        .release .badge.latest { background: #d4edda; color: #155724; }
-        #releases .status { color: #666; font-style: italic; }
-        #releases .error { color: #b00; }
+        .badge { font-size: 0.8em; padding: 0 0.4em; border-radius: 3px; background: #eee; color: #555; }
+        .badge.prerelease { background: #fff3cd; color: #856404; }
+        .badge.latest { background: #d4edda; color: #155724; }
+        .note { color: #666; font-size: 0.9em; }
+        .pr { margin: 0.75rem 0; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 4px; }
+        .pr .title { font-weight: 600; }
+        .pr .build { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-top: 0.4rem; }
+        .pr details { margin-top: 0.4rem; }
+        .pr summary { cursor: pointer; font-size: 0.9em; }
+        .commits { list-style: none; padding-left: 0.5rem; margin: 0.4rem 0; font-size: 0.9em; }
+        .commits li { margin: 0.25rem 0; }
+        .commits code { margin-right: 0.4em; }
+        .status { color: #666; font-style: italic; }
+        .error { color: #b00; }
         #repo-selector { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 1rem 0; }
         #repo-selector label { font-weight: 600; }
         #repo-custom { padding: 0.25rem 0.5rem; min-width: 18rem; }
         #repo-custom[hidden] { display: none; }
+        #local-file { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
     </style>
 </head>
 
@@ -41,23 +52,40 @@
         <input id="repo-custom" type="text" placeholder="owner/Repo" hidden />
     </div>
 
-    <p>
-        Releases of
-        <a href="#" id="firmware-repo-link"></a>:
-    </p>
-
+    <h2>Releases of <a href="#" id="firmware-repo-link"></a></h2>
     <div id="releases">
         <p class="status">Loading releases…</p>
+    </div>
+
+    <h2>Open pull requests</h2>
+    <div id="pulls">
+        <p class="status">Loading pull requests…</p>
+    </div>
+
+    <h2>Flash a downloaded file</h2>
+    <p class="note">
+        Browsers can't fetch firmware straight from GitHub release downloads (no CORS headers), so a build
+        without a connect button has to be downloaded first and then picked here.
+    </p>
+    <div id="local-file">
+        <input id="local-file-input" type="file" accept=".bin,application/octet-stream" />
     </div>
 
     <script>
         const PRESETS = ['radimklaska/owie', 'lolwheel/Owie', 'ow-breaker/Owie'];
         const DEFAULT_REPO = 'radimklaska/owie';
+        // Branch holding CORS-safe copies of builds, served via raw.githubusercontent.com:
+        //   releases/<tag>/firmware.bin and pr-<number>/<commit sha>/firmware.bin
+        const BUILDS_BRANCH = 'firmware-builds';
+        const PR_RELEASE_PREFIX = 'ci-pr-';
 
         const select = document.getElementById('repo-select');
         const customInput = document.getElementById('repo-custom');
         const repoLink = document.getElementById('firmware-repo-link');
-        const container = document.getElementById('releases');
+        const releasesContainer = document.getElementById('releases');
+        const pullsContainer = document.getElementById('pulls');
+        const localFileInput = document.getElementById('local-file-input');
+        const localFileContainer = document.getElementById('local-file');
 
         function readInitialRepo() {
             const params = new URLSearchParams(location.search);
@@ -91,66 +119,252 @@
             return /^[\w.-]+\/[\w.-]+$/.test(value);
         }
 
-        async function loadReleases(repo) {
-            repoLink.href = `https://github.com/${repo}/releases`;
-            repoLink.textContent = repo;
-            container.innerHTML = '<p class="status">Loading releases…</p>';
+        async function githubApi(path) {
+            const res = await fetch(`https://api.github.com/repos/${path}`);
+            if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
+                throw new Error('GitHub API rate limit reached, try again in a while');
+            }
+            if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+            return res.json();
+        }
+
+        // Paths of firmware.bin files on the builds branch; empty if the repo has no such branch.
+        async function loadBuildPaths(repo) {
             try {
-                const res = await fetch(`https://api.github.com/repos/${repo}/releases`);
-                if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
-                const releases = await res.json();
-                container.innerHTML = '';
-                const usable = releases.filter(r => r.assets.some(a => a.name === 'firmware.bin'));
-                if (!usable.length) {
-                    container.innerHTML = '<p class="status">No releases with firmware.bin found.</p>';
-                    return;
-                }
-                let latestSeen = false;
-                for (const release of usable) {
-                    const asset = release.assets.find(a => a.name === 'firmware.bin');
-                    const manifest = {
-                        name: `Owie ${release.tag_name}`,
-                        version: release.tag_name,
-                        builds: [{
-                            chipFamily: 'ESP8266',
-                            parts: [{ path: asset.browser_download_url, offset: 0 }]
-                        }]
-                    };
-                    const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
-                    const manifestUrl = URL.createObjectURL(blob);
-
-                    const row = document.createElement('div');
-                    row.className = 'release';
-
-                    const tag = document.createElement('span');
-                    tag.className = 'tag';
-                    tag.textContent = release.tag_name;
-                    row.appendChild(tag);
-
-                    if (!release.prerelease && !latestSeen) {
-                        const badge = document.createElement('span');
-                        badge.className = 'badge latest';
-                        badge.textContent = 'latest';
-                        row.appendChild(badge);
-                        latestSeen = true;
-                    }
-                    if (release.prerelease) {
-                        const badge = document.createElement('span');
-                        badge.className = 'badge prerelease';
-                        badge.textContent = 'pre-release';
-                        row.appendChild(badge);
-                    }
-
-                    const btn = document.createElement('esp-web-install-button');
-                    btn.setAttribute('manifest', manifestUrl);
-                    row.appendChild(btn);
-
-                    container.appendChild(row);
-                }
+                const tree = await githubApi(`${repo}/git/trees/${BUILDS_BRANCH}?recursive=1`);
+                return new Set(tree.tree.filter(e => e.type === 'blob' && e.path.endsWith('/firmware.bin')).map(e => e.path));
             } catch (err) {
-                container.innerHTML = `<p class="error">Failed to load releases: ${err.message}</p>`;
+                return new Set();
             }
         }
+
+        function el(tag, className, text) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (text !== undefined) node.textContent = text;
+            return node;
+        }
+
+        function link(href, text) {
+            const a = el('a', '', text);
+            a.href = href;
+            return a;
+        }
+
+        function shortSha(sha) {
+            return sha.slice(0, 7);
+        }
+
+        function installButton(name, version, firmwareUrl) {
+            const manifest = {
+                name,
+                version,
+                builds: [{
+                    chipFamily: 'ESP8266',
+                    parts: [{ path: firmwareUrl, offset: 0 }]
+                }]
+            };
+            const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+            const btn = document.createElement('esp-web-install-button');
+            btn.setAttribute('manifest', URL.createObjectURL(blob));
+            return btn;
+        }
+
+        // firmware.bin, or firmware_<short sha>.bin as published by the per-PR CI pre-releases.
+        function firmwareAsset(release) {
+            return release.assets.find(a => /^firmware(_[0-9a-f]+)?\.bin$/.test(a.name));
+        }
+
+        function rawUrl(repo, path) {
+            return `https://raw.githubusercontent.com/${repo}/${BUILDS_BRANCH}/${path}`;
+        }
+
+        // Install button when a CORS-safe copy exists, otherwise a hint to use the file picker.
+        function flashControl(repo, buildPaths, path, name, version) {
+            if (buildPaths.has(path)) return installButton(name, version, rawUrl(repo, path));
+            return el('span', 'note', 'download, then flash it below');
+        }
+
+        function renderReleases(repo, releases, buildPaths) {
+            releasesContainer.innerHTML = '';
+            const usable = releases.filter(r =>
+                !r.tag_name.startsWith(PR_RELEASE_PREFIX) && firmwareAsset(r));
+            if (!usable.length) {
+                releasesContainer.innerHTML = '<p class="status">No releases with firmware.bin found.</p>';
+                return;
+            }
+            let latestSeen = false;
+            for (const release of usable) {
+                const asset = firmwareAsset(release);
+                const row = el('div', 'release');
+                row.appendChild(el('span', 'tag', release.tag_name));
+
+                if (!release.prerelease && !latestSeen) {
+                    row.appendChild(el('span', 'badge latest', 'latest'));
+                    latestSeen = true;
+                }
+                if (release.prerelease) {
+                    row.appendChild(el('span', 'badge prerelease', 'pre-release'));
+                }
+
+                row.appendChild(flashControl(repo, buildPaths, `releases/${release.tag_name}/firmware.bin`,
+                    `Owie ${release.tag_name}`, release.tag_name));
+                row.appendChild(link(asset.browser_download_url, 'download .bin'));
+                releasesContainer.appendChild(row);
+            }
+        }
+
+        let ciRunsPromise = null;
+
+        // Map of commit sha to the newest pull request CI run for it, preferring build workflows.
+        function loadCiRuns(repo) {
+            if (!ciRunsPromise) {
+                ciRunsPromise = githubApi(`${repo}/actions/runs?event=pull_request&per_page=100`)
+                    .then(data => {
+                        const bySha = new Map();
+                        for (const run of data.workflow_runs) {
+                            const current = bySha.get(run.head_sha);
+                            if (!current || (!/build/i.test(current.name) && /build/i.test(run.name))) {
+                                bySha.set(run.head_sha, run);
+                            }
+                        }
+                        return bySha;
+                    })
+                    .catch(() => new Map());
+            }
+            return ciRunsPromise;
+        }
+
+        async function renderCommits(repo, pr, prRelease, buildPaths, list) {
+            try {
+                const [commits, runs] = await Promise.all([
+                    githubApi(`${repo}/pulls/${pr.number}/commits?per_page=100`),
+                    loadCiRuns(repo)
+                ]);
+                list.innerHTML = '';
+                for (const commit of commits.reverse()) {
+                    const item = el('li');
+                    const sha = el('code');
+                    sha.appendChild(link(`${pr.html_url}/commits/${commit.sha}`, shortSha(commit.sha)));
+                    item.appendChild(sha);
+                    item.appendChild(el('span', '', commit.commit.message.split('\n')[0] + ' — '));
+
+                    const path = `pr-${pr.number}/${commit.sha}/firmware.bin`;
+                    if (buildPaths.has(path)) {
+                        item.appendChild(link(rawUrl(repo, path), 'download .bin'));
+                    } else if (prRelease && prRelease.target_commitish === commit.sha) {
+                        item.appendChild(link(prRelease.asset.browser_download_url, 'download .bin'));
+                    } else if (runs.has(commit.sha)) {
+                        const run = runs.get(commit.sha);
+                        const state = run.status === 'completed' ? run.conclusion : run.status.replace('_', ' ');
+                        item.appendChild(el('span', 'note', 'no .bin kept; '));
+                        item.appendChild(link(run.html_url, `CI run (${state}, zip artifact needs GitHub login)`));
+                    } else {
+                        item.appendChild(el('span', 'note', 'no build'));
+                    }
+                    list.appendChild(item);
+                }
+            } catch (err) {
+                list.innerHTML = `<li class="error">Failed to load commits: ${err.message}</li>`;
+            }
+        }
+
+        function renderPulls(repo, pulls, releases, buildPaths) {
+            pullsContainer.innerHTML = '';
+            if (!pulls.length) {
+                pullsContainer.innerHTML = '<p class="status">No open pull requests.</p>';
+                return;
+            }
+            for (const pr of pulls) {
+                const box = el('div', 'pr');
+                const heading = el('div');
+                heading.appendChild(link(pr.html_url, `#${pr.number}`));
+                heading.appendChild(document.createTextNode(' '));
+                heading.appendChild(el('span', 'title', pr.title));
+                if (pr.draft) {
+                    heading.appendChild(document.createTextNode(' '));
+                    heading.appendChild(el('span', 'badge', 'draft'));
+                }
+                box.appendChild(heading);
+
+                const release = releases.find(r => r.tag_name === `${PR_RELEASE_PREFIX}${pr.number}`);
+                const asset = release && firmwareAsset(release);
+                const prRelease = asset ? { target_commitish: release.target_commitish, asset } : null;
+                const headSha = pr.head.sha;
+                const headPath = `pr-${pr.number}/${headSha}/firmware.bin`;
+
+                const build = el('div', 'build');
+                if (buildPaths.has(headPath)) {
+                    build.appendChild(el('span', 'note', `build of ${shortSha(headSha)} (latest commit)`));
+                    build.appendChild(installButton(`Owie PR #${pr.number}`, shortSha(headSha), rawUrl(repo, headPath)));
+                    build.appendChild(link(rawUrl(repo, headPath), 'download .bin'));
+                } else if (prRelease) {
+                    const builtSha = prRelease.target_commitish;
+                    const label = builtSha === headSha
+                        ? `build of ${shortSha(builtSha)} (latest commit)`
+                        : `build of ${shortSha(builtSha)}, not of the latest commit ${shortSha(headSha)} — a new build may still be running`;
+                    build.appendChild(el('span', 'note', label));
+                    build.appendChild(flashControl(repo, buildPaths, `pr-${pr.number}/${builtSha}/firmware.bin`,
+                        `Owie PR #${pr.number}`, shortSha(builtSha)));
+                    build.appendChild(link(asset.browser_download_url, 'download .bin'));
+                } else {
+                    build.appendChild(el('span', 'note', 'This pull request has no build yet.'));
+                }
+                box.appendChild(build);
+
+                const details = el('details');
+                details.appendChild(el('summary', '', 'Commits'));
+                const list = el('ul', 'commits');
+                list.innerHTML = '<li class="status">Loading commits…</li>';
+                details.appendChild(list);
+                details.addEventListener('toggle', () => {
+                    if (details.open && !details.dataset.loaded) {
+                        details.dataset.loaded = '1';
+                        renderCommits(repo, pr, prRelease, buildPaths, list);
+                    }
+                });
+                box.appendChild(details);
+
+                pullsContainer.appendChild(box);
+            }
+        }
+
+        async function loadRepo(repo) {
+            repoLink.href = `https://github.com/${repo}/releases`;
+            repoLink.textContent = repo;
+            releasesContainer.innerHTML = '<p class="status">Loading releases…</p>';
+            pullsContainer.innerHTML = '<p class="status">Loading pull requests…</p>';
+            ciRunsPromise = null;
+
+            const buildPathsPromise = loadBuildPaths(repo);
+            let releases = [];
+            try {
+                releases = await githubApi(`${repo}/releases?per_page=100`);
+                renderReleases(repo, releases, await buildPathsPromise);
+            } catch (err) {
+                releasesContainer.innerHTML = `<p class="error">Failed to load releases: ${err.message}</p>`;
+            }
+            try {
+                const pulls = await githubApi(`${repo}/pulls?state=open&per_page=100`);
+                renderPulls(repo, pulls, releases, await buildPathsPromise);
+            } catch (err) {
+                pullsContainer.innerHTML = `<p class="error">Failed to load pull requests: ${err.message}</p>`;
+            }
+        }
+
+        let localFileUrls = [];
+
+        localFileInput.addEventListener('change', () => {
+            localFileContainer.querySelectorAll('esp-web-install-button').forEach(b => b.remove());
+            localFileUrls.forEach(u => URL.revokeObjectURL(u));
+            localFileUrls = [];
+            const file = localFileInput.files[0];
+            if (!file) return;
+            const firmwareUrl = URL.createObjectURL(file);
+            const btn = installButton(`Owie (${file.name})`, file.name, firmwareUrl);
+            localFileUrls.push(firmwareUrl, btn.getAttribute('manifest'));
+            localFileContainer.appendChild(btn);
+        });
 
         select.addEventListener('change', () => {
             if (select.value === '__custom__') {
@@ -161,18 +375,18 @@
             customInput.hidden = true;
             customInput.value = '';
             updateUrl(select.value);
-            loadReleases(select.value);
+            loadRepo(select.value);
         });
 
         function commitCustom() {
             const value = customInput.value.trim();
             if (!value) return;
             if (!isValidRepo(value)) {
-                container.innerHTML = `<p class="error">"${value}" is not a valid owner/repo.</p>`;
+                releasesContainer.innerHTML = `<p class="error">"${value}" is not a valid owner/repo.</p>`;
                 return;
             }
             updateUrl(value);
-            loadReleases(value);
+            loadRepo(value);
         }
 
         customInput.addEventListener('change', commitCustom);
@@ -185,7 +399,7 @@
 
         const initial = readInitialRepo();
         applyRepoToControls(initial);
-        loadReleases(initial);
+        loadRepo(initial);
     </script>
 </body>
 
