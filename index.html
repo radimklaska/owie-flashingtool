@@ -13,6 +13,15 @@
         .badge { font-size: 0.8em; padding: 0 0.4em; border-radius: 3px; background: #eee; color: #555; }
         .badge.prerelease { background: #fff3cd; color: #856404; }
         .badge.latest { background: #d4edda; color: #155724; }
+        .release-item { margin: 0.5rem 0; padding-bottom: 0.4rem; border-bottom: 1px solid #eee; }
+        .release-item .release { margin: 0; }
+        .release-item details { margin-top: 0.3rem; font-size: 0.9em; }
+        .release-item summary { cursor: pointer; color: #555; }
+        .release-item .meta { color: #666; margin: 0.4rem 0; }
+        .release-notes { margin: 0.4rem 0; padding: 0.1rem 0.75rem; border-left: 3px solid #ddd; overflow-wrap: anywhere; }
+        .release-notes h1, .release-notes h2, .release-notes h3 { font-size: 1em; }
+        .release-notes img { max-width: 100%; height: auto; }
+        .release-notes pre { overflow-x: auto; }
         .note { color: #666; font-size: 0.9em; }
         .download { display: inline-block; padding: 0.2em 0.65em; border: 1px solid #b7dcc0; border-radius: 4px; background: #d4edda; color: #155724; font-size: 0.9em; font-weight: 600; text-decoration: none; white-space: nowrap; }
         .download:hover { background: #c3e6cb; border-color: #9fd0ab; }
@@ -146,8 +155,8 @@
             return /^[\w.-]+\/[\w.-]+$/.test(value);
         }
 
-        async function githubApi(path) {
-            const res = await fetch(`https://api.github.com/repos/${path}`);
+        async function githubApi(path, accept = 'application/vnd.github+json') {
+            const res = await fetch(`https://api.github.com/repos/${path}`, { headers: { Accept: accept } });
             if ((res.status === 403 || res.status === 429) && res.headers.get('x-ratelimit-remaining') === '0') {
                 throw new Error('GitHub API rate limit reached, try again in a while');
             }
@@ -261,8 +270,52 @@
 
                 appendBuildControls(row, repo, buildPaths, `releases/${release.tag_name}/firmware.bin`,
                     `Owie ${release.tag_name}`, release.tag_name, asset.browser_download_url);
-                releasesContainer.appendChild(row);
+
+                const item = el('div', 'release-item');
+                item.appendChild(row);
+                item.appendChild(releaseDetails(release));
+                releasesContainer.appendChild(item);
             }
+        }
+
+        // Collapsed block with the release title, date, GitHub link and release notes.
+        function releaseDetails(release) {
+            const details = el('details');
+            details.appendChild(el('summary', '', 'Release notes and details'));
+
+            const meta = el('p', 'meta');
+            if (release.name && release.name !== release.tag_name) {
+                meta.appendChild(el('strong', '', release.name));
+                meta.appendChild(document.createTextNode(' · '));
+            }
+            const published = release.published_at || release.created_at;
+            if (published) {
+                const time = el('time', '', `published ${relativeTime(published)}`);
+                time.dateTime = published;
+                time.title = new Date(published).toLocaleString();
+                meta.appendChild(time);
+                if (release.author) meta.appendChild(document.createTextNode(` by ${release.author.login}`));
+                meta.appendChild(document.createTextNode(' · '));
+            }
+            const ghLink = link(release.html_url, 'View release on GitHub');
+            ghLink.target = '_blank';
+            ghLink.rel = 'noopener';
+            meta.appendChild(ghLink);
+            details.appendChild(meta);
+
+            const notes = el('div', 'release-notes');
+            if (release.body_html && release.body_html.trim()) {
+                // body_html is rendered and sanitized by GitHub, same as on github.com.
+                notes.innerHTML = release.body_html;
+                notes.querySelectorAll('a[href]').forEach(a => {
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                });
+            } else {
+                notes.appendChild(el('p', 'note', 'No release notes.'));
+            }
+            details.appendChild(notes);
+            return details;
         }
 
         let ciRunsPromise = null;
@@ -403,7 +456,8 @@
             const buildPathsPromise = loadBuildPaths(repo);
             let releases = [];
             try {
-                releases = await githubApi(`${repo}/releases?per_page=100`);
+                // full+json adds body_html (release notes rendered by GitHub).
+                releases = await githubApi(`${repo}/releases?per_page=100`, 'application/vnd.github.full+json');
                 renderReleases(repo, releases, await buildPathsPromise);
             } catch (err) {
                 releasesContainer.innerHTML = `<p class="error">Failed to load releases: ${err.message}</p>`;
