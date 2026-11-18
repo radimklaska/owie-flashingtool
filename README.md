@@ -2,7 +2,7 @@
 
 A static web page that flashes [Owie](https://github.com/lolwheel/Owie) firmware onto an ESP8266 over Web Serial, using [esp-web-tools](https://esphome.github.io/esp-web-tools/).
 
-Live page: <https://radimklaska.github.io/owie-flashingtool/>
+Live page: <https://owie-flashingtool.klaska.net/>
 
 ## How it works
 
