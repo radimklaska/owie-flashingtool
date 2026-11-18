@@ -6,7 +6,7 @@ Live page: <https://owie-flashingtool.klaska.net/>
 
 ## How it works
 
-`index.html` reads the selected repo through the GitHub API at load time and shows:
+`site/index.html` reads the selected repo through the GitHub API at load time and shows:
 
 - **Releases** — every release that ships a firmware asset (`firmware.bin` or `firmware_<suffix>.bin`), with GitHub's `latest` and `pre-release` badges. CI pre-releases tagged `ci-pr-<number>` are left out here.
 - **Open pull requests** — number and title, linked to the PR. If the PR has a build (the `ci-pr-<number>` pre-release, asset `firmware.bin` or `firmware_<short sha>.bin`), the row says which commit it was built from and links the `.bin`; otherwise it says the PR has no build yet. Expanding **Commits** lists every commit of the PR with its `.bin` when one is kept, or a link to its CI run (zip artifact, needs a GitHub login).
@@ -39,4 +39,26 @@ A Chromium-based browser (Chrome, Edge, Opera) on desktop — Web Serial is not 
 
 ## Local development
 
-It's a single file. Open `index.html` in a browser, or serve the directory with any static server (e.g. `python3 -m http.server`). esp-web-tools is loaded from unpkg, so no build step is required.
+The site is `site/` (`index.html` plus a `404.html`); esp-web-tools is loaded from unpkg, so there is no build step. Open `site/index.html` in a browser, or serve it the way production does:
+
+```sh
+npm ci
+npx wrangler dev        # http://localhost:8787, with the 404 page
+```
+
+## Hosting and deploys
+
+Served by Cloudflare as an assets-only Worker named `owie-flashingtool` (`wrangler.jsonc`) on the custom domain owie-flashingtool.klaska.net. No GitHub Pages, no Netlify. The old address klaska.net/owie-flashingtool/ redirects here.
+
+`.github/workflows/deploy.yml`:
+
+- **Push to `master`** deploys production (`npx wrangler deploy`). It can also be started by hand from the Actions tab.
+- **Pull request** uploads a preview named `pr-<number>` on workers.dev and posts its link in one PR comment, updated on every push. Previews are not indexed.
+- **Visual regression** (job `visual`, `tests/visual.spec.mjs`) screenshots the preview and production and fails on a pixel difference. GitHub API responses are fetched once and replayed to both sides and the clock is frozen, so both render the same data. A PR that changes how the page looks fails it on purpose: check the `visual-diffs` artifact, then merge.
+- **Closing or merging the PR** deletes its preview and the comment says so.
+
+`.github/workflows/link-checker.yml` checks the links in `site/` on PRs, weekly and on demand.
+
+Secrets: `CLOUDFLARE_API_TOKEN` (this repo's own deploy token: Workers Scripts Edit + Account Settings Read on the account, Workers Routes Edit + Zone Read on klaska.net) and `CLOUDFLARE_ACCOUNT_ID`. Dependabot PRs get no secrets, so they get no preview.
+
+Visitor stats come from Cloudflare Web Analytics, which the klaska.net zone injects; there is no tracking code in the page.
