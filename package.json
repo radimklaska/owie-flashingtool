@@ -1,0 +1,14 @@
+{
+  "name": "owie-flashingtool",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "test:visual": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "pixelmatch": "5.3.0",
+    "pngjs": "7.0.0",
+    "wrangler": "4.159.0"
+  }
+}

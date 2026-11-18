@@ -1,0 +1,29 @@
+// Cloudflare Worker (static assets only) serving site/ at owie-flashingtool.klaska.net.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "owie-flashingtool",
+  // Pin it. A date newer than the local workerd breaks `wrangler dev`, so use a date
+  // a few days old, not today's.
+  "compatibility_date": "2026-11-15",
+
+  // Production lives only on the custom domain; no <name>.<account>.workers.dev copy.
+  "workers_dev": false,
+  // Needed for the per-PR previews (and the per-version URLs in the PR comment).
+  "preview_urls": true,
+
+  // Before the first deploy, delete any existing DNS record for this hostname:
+  // the deploy does NOT replace one (error 100117 "already has externally managed
+  // DNS records"). Cloudflare then creates the record and the certificate itself.
+  "routes": [{ "pattern": "owie-flashingtool.klaska.net", "custom_domain": true }],
+
+  // Required by `wrangler preview` (Workers Previews, open beta).
+  "previews": {},
+
+  "assets": {
+    "directory": "./site",
+    "html_handling": "auto-trailing-slash",
+    // Serves the nearest 404.html with status 404. Use "single-page-application"
+    // for an SPA instead.
+    "not_found_handling": "404-page"
+  }
+}
