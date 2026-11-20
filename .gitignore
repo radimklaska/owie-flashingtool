@@ -3,3 +3,6 @@ node_modules/
 test-results/
 playwright-report/
 visual-diffs/
+visual-results/
+visual-report/
+lighthouse/

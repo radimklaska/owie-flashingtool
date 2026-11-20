@@ -52,10 +52,11 @@ Served by Cloudflare as an assets-only Worker named `owie-flashingtool` (`wrangl
 
 `.github/workflows/deploy.yml`:
 
-- **Push to `master`** deploys production (`npx wrangler deploy`). It can also be started by hand from the Actions tab.
-- **Pull request** uploads a preview named `pr-<number>` on workers.dev and posts its link in one PR comment, updated on every push. Previews are not indexed.
-- **Visual regression** (job `visual`, `tests/visual.spec.mjs`) screenshots the preview and production and fails on a pixel difference. GitHub API responses are fetched once and replayed to both sides and the clock is frozen, so both render the same data. A PR that changes how the page looks fails it on purpose: check the `visual-diffs` artifact, then merge.
-- **Closing or merging the PR** deletes its preview and the comment says so.
+- **Push to `master`** deploys production (`npx wrangler deploy`). It can also be started by hand from the Actions tab, on `master` only: a manual run on another branch fails and deploys nothing.
+- **Pull request** uploads a preview named `pr-<number>` on workers.dev and posts a new PR comment per deploy (preview, commit, run, a QR code for phones, Visual and Lighthouse rows); earlier preview comments are collapsed. Previews are not indexed. Same setup as https://cfsite.klaska.net.
+- **Visual regression** (job `visual`, `tests/visual.spec.mjs`) screenshots the preview and production and fails on a pixel difference. GitHub API responses are fetched once and replayed to both sides and the clock is frozen, so both render the same data. A PR that changes how the page looks fails it on purpose: the comment links a page with the differences; check it, then merge.
+- **Lighthouse** (job `lighthouse`) scores the preview's home page (mobile, median of 3 runs). Informational.
+- **Closing or merging the PR** deletes its preview, collapses the preview comments and says so in a new one.
 
 `.github/workflows/link-checker.yml` checks the links in `site/` on PRs, weekly and on demand.
 
